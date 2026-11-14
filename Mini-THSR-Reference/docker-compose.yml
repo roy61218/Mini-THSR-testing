@@ -1,0 +1,65 @@
+name: mini-thsr-reference
+
+x-backend-env: &backend-env
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: "${DB_NAME:-minithsr}"
+  DB_USER: "${DB_USER:-minithsr}"
+  DB_PASSWORD: "${DB_PASSWORD:-minithsr-local}"
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: "${DB_NAME:-minithsr}"
+      POSTGRES_USER: "${DB_USER:-minithsr}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:-minithsr-local}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  db-init:
+    build: ./backend
+    command: ["python", "db_init.py"]
+    environment:
+      <<: *backend-env
+      DATA_DIR: /data
+      SCHEMA_FILE: /schema/schema.sql
+    volumes:
+      - ./data:/data:ro
+      - ./schema:/schema:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build: ./backend
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/users', timeout=2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+
+volumes:
+  pgdata:
